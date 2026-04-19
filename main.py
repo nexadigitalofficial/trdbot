@@ -11,12 +11,13 @@ import asyncio
 import logging
 import sys
 import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Proje dizinini path'e ekle
 sys.path.insert(0, os.path.dirname(__file__))
 
 # ─── VERİ DİZİNİNİ ÖNCE OLUŞTUR ─────────────────────────────────────────────
-# FileHandler'dan ÖNCE yapılmalı, aksi halde FileNotFoundError alınır
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(_DATA_DIR, exist_ok=True)
 
@@ -36,6 +37,25 @@ logger = logging.getLogger(__name__)
 from telegram.ext import Application
 from bot import build_app, post_init
 import config
+
+
+# ─── RENDER HEALTH-CHECK SUNUCUSU ────────────────────────────────────────────
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, format, *args):
+        pass  # HTTP loglarını bastır
+
+
+def _start_health_server():
+    """Render'ın health-check isteklerini karşılamak için arka planda HTTP sunucusu başlat."""
+    port = int(os.getenv("PORT", "10000"))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    logger.info(f"✅ Health-check sunucusu port {port}'da başlatıldı")
+    server.serve_forever()
 
 
 def validate_config():
@@ -61,9 +81,12 @@ def main():
     logger.info("🚀 ALGO TRADE BOT başlatılıyor...")
     logger.info("=" * 60)
 
-    # Config kontrolü
     if not validate_config():
         sys.exit(1)
+
+    # Render health-check için HTTP sunucusunu arka planda başlat
+    health_thread = threading.Thread(target=_start_health_server, daemon=True)
+    health_thread.start()
 
     # Uygulamayı oluştur
     app = build_app()
